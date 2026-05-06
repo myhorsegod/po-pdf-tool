@@ -1,5 +1,7 @@
-streamlit
-pypdf
-pandas
-openpyxl
-opena
+
+streamlit==1.31.1
+pypdf==4.2.0
+pandas==2.1.1
+openpyxl==3.1.2
+openai==0.28.1
+
