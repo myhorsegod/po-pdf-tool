@@ -27,43 +27,45 @@ def extract_data(file):
     po_number = ""
     customer = ""
 
-    # 抓 PO
-    po_match = re.search(r'(PO\d+)', text)
+    # ✅ 抓 PO
+    po_match = re.search(r'(PO[#\-\dA-Z]+)', text)
     if po_match:
         po_number = po_match.group(1)
 
-    # 抓 customer
+    # ✅ 抓 customer
     lines = text.split("\n")
     for line in lines:
-        if "GmbH" in line or "Limited" in line:
+        if len(line.strip()) > 5 and ("Ltd" in line or "Limited" in line or "Company" in line):
             customer = line.strip()
 
-    # 抓 items
+    # ✅ 更寬鬆抓 item（這是重點）
     for line in lines:
-        match = re.search(r'(\d{8,}).+?(\d+)\sPiece\s([\d]+\.\d+)', line)
+        parts = line.split()
 
-        if match:
-            parts = line.split()
+        if len(parts) >= 4:
+            # 嘗試找到數字（quantity + price）
+            numbers = [p for p in parts if re.match(r'^\d+(\.\d+)?$', p)]
 
-            try:
-                item_code = parts[1]
-                qty = parts[-4]
-                price = parts[-3]
-                desc = " ".join(parts[2:-4])
+            if len(numbers) >= 2:
+                try:
+                    qty = numbers[-2]
+                    price = numbers[-1]
 
-                data.append({
-                    "Customer": customer,
-                    "PO No": po_number,
-                    "Item Code": item_code,
-                    "Description": desc,
-                    "Quantity": qty,
-                    "Price": price
-                })
-            except:
-                pass
+                    item_code = parts[0]
+                    desc = " ".join(parts[1:-2])
+
+                    data.append({
+                        "Customer": customer,
+                        "PO No": po_number,
+                        "Item Code": item_code,
+                        "Description": desc,
+                        "Quantity": qty,
+                        "Price": price
+                    })
+                except:
+                    pass
 
     return data
-
 
 if st.button("開始處理"):
 
