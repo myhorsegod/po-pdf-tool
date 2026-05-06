@@ -1,98 +1,111 @@
 import streamlit as st
 from pypdf import PdfReader
 import pandas as pd
-import re
 from io import BytesIO
+import openai
+import json
 
-st.title("📄 PO PDF 轉 Excel 工具")
+# ✅ 設定 API Key（在 Streamlit Secrets 設定）
+openai.api_key = st.secrets["OPENAI_API_KEY"]
 
-uploaded_files = st.file_uploader("上傳PDF訂單（可多個）", type="pdf", accept_multiple_files=True)
+st.title("📄 PO PDF 轉 Excel 工具（AI版）")
 
+uploaded_files = st.file_uploader(
+    "上傳PDF訂單（可多個）",
+    type="pdf",
+    accept_multiple_files=True
+)
 
+# ✅ 讀PDF文字
 def extract_text_from_pdf(file):
     reader = PdfReader(file)
     text = ""
 
     for page in reader.pages:
-        if page.extract_text():
-            text += page.extract_text() + "\n"
+        page_text = page.extract_text()
+        if page_text:
+            text += page_text + "\n"
 
     return text
 
 
+# ✅ AI解析（核心）
+def extract_with_ai(text):
+
+    prompt = f"""
+    Extract structured data from this purchase order.
+
+    Return ONLY JSON in this format:
+
+    {{
+      "customer_name": "...",
+      "po_number": "...",
+      "items": [
+        {{
+          "item_code": "...",
+          "description": "...",
+          "quantity": "...",
+          "price": "..."
+        }}
+      ]
+    }}
+
+    Rules:
+    - Do not include explanations
+    - If missing, leave blank
+    - Keep numbers clean
+
+    TEXT:
+    {text[:12000]}
+    """
+
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You extract structured data from documents."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0
+        )
+
+        result = response["choices"][0]["message"]["content"]
+
+        return json.loads(result)
+
+    except Exception as e:
+        st.error(f"AI 解析錯誤: {e}")
+        return None
+
+
+# ✅ 主解析流程
 def extract_data(file):
     text = extract_text_from_pdf(file)
 
+    ai_result = extract_with_ai(text)
+
     data = []
-    po_number = ""
-    customer = ""
 
-    # ✅ 抓 PO
-    po_match = re.search(r'(PO[#\-\dA-Z]+)', text)
-    if po_match:
-        po_number = po_match.group(1)
+    if not ai_result:
+        return data
 
-    # ✅ 抓 customer
-    lines = text.split("\n")
-    for line in lines:
-        if len(line.strip()) > 5 and ("Ltd" in line or "Limited" in line or "Company" in line):
-            customer = line.strip()
+    customer = ai_result.get("customer_name", "")
+    po_number = ai_result.get("po_number", "")
 
-    # ✅ 更寬鬆抓 item（這是重點）
-    for line in lines:
-        parts = line.split()
-
-        if len(parts) >= 4:
-            # 嘗試找到數字（quantity + price）
-            numbers = [p for p in parts if re.match(r'^\d+(\.\d+)?$', p)]
-
-            if len(numbers) >= 2:
-                try:
-                    qty = numbers[-2]
-                    price = numbers[-1]
-
-                    item_code = parts[0]
-                    desc = " ".join(parts[1:-2])
-
-                    data.append({
-                        "Customer": customer,
-                        "PO No": po_number,
-                        "Item Code": item_code,
-                        "Description": desc,
-                        "Quantity": qty,
-                        "Price": price
-                    })
-                except:
-                    pass
+    for item in ai_result.get("items", []):
+        data.append({
+            "Customer": customer,
+            "PO No": po_number,
+            "Item Code": item.get("item_code", ""),
+            "Description": item.get("description", ""),
+            "Quantity": item.get("quantity", ""),
+            "Price": item.get("price", "")
+        })
 
     return data
 
+
+# ✅ UI 按鈕
 if st.button("開始處理"):
 
     if not uploaded_files:
-        st.warning("請先上傳PDF")
-    else:
-        all_data = []
-
-        for file in uploaded_files:
-            result = extract_data(file)
-            all_data.extend(result)
-
-        if not all_data:
-            st.error("抓不到資料（PDF格式不同）")
-        else:
-            df = pd.DataFrame(all_data)
-
-            st.success("✅ 解析完成")
-            st.dataframe(df)
-
-            output = BytesIO()
-            df.to_excel(output, index=False)
-            output.seek(0)
-
-            st.download_button(
-                label="📥 下載 Excel",
-                data=output,
-                file_name="output.xlsx",
-                mime="application/vnd.ms-excel"
-            )
